@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The API is HTTPS with a self-signed, pinned certificate, and the read-only status and
+	     3D view are plain HTTP, all on the Pi's port 8726. Local networking covers
+	     raspberrypi, .local names and IP addresses. A Tailscale MagicDNS name is fully
+	     qualified, so ts.net needs its own exception; WireGuard encrypts that traffic. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Tramline connects to your print server on your home network.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Scan the QR code with your print server's address and fingerprint.</string>
+</dict>
+</plist>
