@@ -9,10 +9,23 @@ A native iOS app for Tramline: everything `tramline gui` does, from an iPhone 15
 - **Decisions made:** iOS 27 minimum, free Apple ID signing (builds expire after 7 days), bundle ID `com.alar.tramline`, light and dark following the system, addresses set in the app, `raspberrypi` by default with more tried in order as fallbacks.
 - **Go code isn't shared.** gomobile can't carry the Go types, would route the Secure Enclave through Go's TLS, and needs a non-standard-library module that `build.sh` refuses. The client is about 300 lines of Swift, and what's worth sharing, the 3D view, is loaded from the Pi.
 
+## Where it lives
+
+This repository was `tramline-ios/` inside stringing-along until 2026-11-22. It now sits beside a checkout of the server, [Moudoux/tramline](https://github.com/Moudoux/tramline), so both are in the same parent folder:
+
+```
+Documents/
+  tramline/        the server, client and desktop GUI (Go)
+  tramline-ios/    this app
+```
+
+Paths written as `tramline/...` in these notes mean that sibling checkout, `../tramline/` from here. The app doesn't build against it; the notes only cite it.
+
 ## Building
 
+From this folder:
+
 ```sh
-cd tramline-ios
 xcodebuild test -project Tramline.xcodeproj -scheme Tramline -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
@@ -30,14 +43,14 @@ The project file is hand-written with synchronised folders, so new files in `Tra
 | `Tramline/Views/` | The tabs, sheets, bed map, stop button and the 3D view |
 | `TramlineTests/` | Swift Testing, with JSON captured from the simulator in `Fixtures/` |
 
-Paths here are relative to the repository root. Tramline's own notes in `tramline/notes/` are the source of truth for the server. Where these notes and the code differ, the code wins.
+Paths here are relative to this repository, except `tramline/...`, which is the server's checkout beside it. Tramline's own notes in `tramline/notes/` are the source of truth for the server. Where these notes and the code differ, the code wins.
 
 ## What the user asked for
 
 - An iOS app for Tramline that **matches the Tramline GUI** (`tramline gui`), so they can control and monitor everything from their iPhone 15 Pro.
 - Apple's latest design language: sleek, modern, easy to use.
 - **Authenticating directly with the Tramline server**, so no computer running `tramline gui` in between.
-- It goes in this folder, `tramline-ios/`, beside `tramline/`.
+- It goes in this folder, `tramline-ios/`, beside `tramline/`. Since 2026-11-22 that's its own repository, [Moudoux/tramline-ios](https://github.com/Moudoux/tramline-ios).
 
 ## Files
 
