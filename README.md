@@ -14,7 +14,7 @@ A native iOS app for Tramline: everything `tramline gui` does, from an iPhone 15
 This repository was `tramline-ios/` inside stringing-along until 2026-11-22. It now sits beside a checkout of the server, [Moudoux/tramline](https://github.com/Moudoux/tramline), so both are in the same parent folder:
 
 ```
-Documents/
+~/Documents/Code/
   tramline/        the server, client and desktop GUI (Go)
   tramline-ios/    this app
 ```
