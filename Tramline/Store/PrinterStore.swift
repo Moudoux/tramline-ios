@@ -9,7 +9,7 @@ import Observation
 final class PrinterStore {
     let client: TramlineClient
 
-    // Polled state.
+    // The streamed or polled state.
     private(set) var page: WebStatus?
     private(set) var full: StatusResponse?
     private(set) var files: FilesResponse?
@@ -38,15 +38,24 @@ final class PrinterStore {
     var scheduleTabShown = false
 
     @ObservationIgnored private var pageTask: Task<Void, Never>?
+    @ObservationIgnored private var fullStreamTask: Task<Void, Never>?
     @ObservationIgnored private var fullTask: Task<Void, Never>?
+    @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var lastBusy: String?
     @ObservationIgnored private var lastCopyState: String?
     @ObservationIgnored private var tramSeen = (id: 0, endedAt: Date?.none)
+    /// Set once a Pi turns out to have no status streams, as one before 0.1.1 doesn't.
+    @ObservationIgnored private(set) var pagePolling = false
+    @ObservationIgnored private(set) var fullPolling = false
+    /// When the page's stream last sent something, while it's open.
+    @ObservationIgnored private var pageStreamSince: Date?
 
-    // From gui.js.
+    // From gui.js and followStatus in status.js.
     static let pageInterval: Duration = .seconds(1)
     static let fullInterval: Duration = .seconds(5)
     static let fullBusyInterval: Duration = .seconds(2)
+    static let streamQuiet: TimeInterval = 5
+    static let streamRetry: Duration = .seconds(2)
     static let tramViewAfter: TimeInterval = 2 * 60
     static let meshAfterSeconds = 6.0
     static let meshStaleSeconds = 30.0
@@ -57,27 +66,81 @@ final class PrinterStore {
         self.client = client
     }
 
-    // MARK: - Polling
+    // MARK: - Following the status
 
-    /// Polls while the app is in the foreground. The full status asks the Hue Bridge for the
-    /// plug every time, so it's asked for less often, as the GUI does.
+    /// Follows the Pi's status streams while the app is in the foreground, as the GUI does
+    /// since 2026-11-21. The streamed full status has no plug, as reading it asks the Hue
+    /// Bridge, so `GET /v1/status` is still asked for every 5 seconds for that. A Pi with
+    /// no streams is polled as before.
     func start() {
         guard pageTask == nil else { return }
-        pageTask = Task { [weak self] in
+        pageTask = Task { [weak self] in await self?.followPage() }
+        fullStreamTask = Task { [weak self] in await self?.followFull() }
+        scheduleFull(after: .zero)
+        watchTask = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.pollPage()
-                try? await Task.sleep(for: Self.pageInterval)
+                try? await Task.sleep(for: .seconds(1))
+                self?.watchPageStream()
             }
         }
-        scheduleFull(after: .zero)
         Task { await loadFiles() }
     }
 
     func stop() {
-        pageTask?.cancel()
+        for task in [pageTask, fullStreamTask, fullTask, watchTask] { task?.cancel() }
         pageTask = nil
-        fullTask?.cancel()
+        fullStreamTask = nil
         fullTask = nil
+        watchTask = nil
+        pageStreamSince = nil
+    }
+
+    /// `/api/events`, or `/api/status` once a second from a Pi without it.
+    private func followPage() async {
+        while !Task.isCancelled, !pagePolling {
+            do {
+                pageStreamSince = Date()
+                for try await data in client.webStatusEvents() {
+                    pageStreamSince = Date()
+                    gotPage(data)
+                }
+            } catch APIError.notFound {
+                pagePolling = true
+            } catch {
+                if !Task.isCancelled { pageLost(error) }
+            }
+            pageStreamSince = nil
+            if !pagePolling { try? await Task.sleep(for: Self.streamRetry) }
+        }
+        while !Task.isCancelled {
+            await pollPage()
+            try? await Task.sleep(for: Self.pageInterval)
+        }
+    }
+
+    /// `/v1/events`. Without it, `pollFull` is all there is, and goes faster while busy.
+    private func followFull() async {
+        while !Task.isCancelled {
+            do {
+                for try await data in client.statusEvents() {
+                    gotFull(data, streamed: true)
+                }
+            } catch APIError.notFound {
+                fullPolling = true
+                return
+            } catch {
+                // The plug's poll shows why, if the Pi is out of reach.
+            }
+            try? await Task.sleep(for: Self.streamRetry)
+        }
+    }
+
+    /// A stream quiet for 5 seconds has stalled, though it's only reopened after 15.
+    private func watchPageStream() {
+        guard let since = pageStreamSince, reachable,
+              Date().timeIntervalSince(since) > Self.streamQuiet else { return }
+        reachable = false
+        pageError = "The Pi has stopped sending its status."
     }
 
     private func scheduleFull(after delay: Duration) {
@@ -87,12 +150,12 @@ final class PrinterStore {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.pollFull()
-                try? await Task.sleep(for: self.fullBusy ? Self.fullBusyInterval : Self.fullInterval)
+                try? await Task.sleep(for: self.fullPolling && self.fullBusy ? Self.fullBusyInterval : Self.fullInterval)
             }
         }
     }
 
-    /// Catches up after an action, without waiting for the next poll.
+    /// Catches up after an action. The streams bring most of it, but not the plug.
     func refreshSoon() {
         scheduleFull(after: .milliseconds(300))
         Task {
@@ -103,33 +166,51 @@ final class PrinterStore {
 
     private func pollPage() async {
         do {
-            let (st, data) = try await client.webStatus()
-            page = st
-            pageJSON = String(decoding: data, as: UTF8.self)
-            pageError = nil
-            reachable = true
-            if heights != nil, Words.isActive(st.print?.state) { heights = nil }
-            afterPoll()
+            let (_, data) = try await client.webStatus()
+            gotPage(data)
         } catch {
-            reachable = false
-            pageError = error.localizedDescription
+            pageLost(error)
         }
     }
 
+    private func gotPage(_ data: Data) {
+        guard let st = try? JSON.decoder.decode(WebStatus.self, from: data) else { return }
+        page = st
+        pageJSON = String(decoding: data, as: UTF8.self)
+        pageError = nil
+        reachable = true
+        if heights != nil, Words.isActive(st.print?.state) { heights = nil }
+        afterPoll()
+    }
+
+    private func pageLost(_ error: Error) {
+        reachable = false
+        pageError = error.localizedDescription
+    }
+
+    /// The full status with the plug, for the plug, and for everything from a Pi without
+    /// streams.
     private func pollFull() async {
         do {
-            let (st, data) = try await client.status()
-            full = st
-            fullJSON = String(decoding: data, as: UTF8.self)
+            let (_, data) = try await client.status()
+            gotFull(data, streamed: false)
             fullError = nil
-            noteTram()
-            noticeCopyEnded(st.copy)
-            showLastMesh(st.print)
             if scheduleTabShown { await loadSchedules() }
-            afterPoll()
         } catch {
             fullError = error.localizedDescription
         }
+    }
+
+    private func gotFull(_ data: Data, streamed: Bool) {
+        guard var st = try? JSON.decoder.decode(StatusResponse.self, from: data) else { return }
+        // A streamed status has no plug, so the last one read stays.
+        if streamed { st.plug = full?.plug }
+        full = st
+        fullJSON = String(decoding: data, as: UTF8.self)
+        noteTram()
+        noticeCopyEnded(st.copy)
+        showLastMesh(st.print)
+        afterPoll()
     }
 
     /// When what's busy changes, the card's listing may have too.
@@ -242,6 +323,11 @@ final class PrinterStore {
         }
 
         card.file = focus?.name ?? st.copy?.name ?? ""
+        if let f = focus {
+            card.fileSum = SumInfo.job(sha256: f.sha256, mode: f.mode, elsewhere: f.elsewhere)
+        } else if let copy = st.copy {
+            card.fileSum = SumInfo.copying(copy.sha256)
+        }
         card.nozzle = Words.temp(st.temps?.nozzle, st.temps?.nozzleTarget)
         card.bed = Words.temp(st.temps?.bed, st.temps?.bedTarget)
 
@@ -543,6 +629,7 @@ struct NowCard {
     var badge = ""
     var tone = Tone.plain
     var file = ""
+    var fileSum: SumInfo?
     var message = ""
     var problem = ""
     var nozzle = "–"

@@ -2,6 +2,14 @@
 
 A native iOS app for Tramline: everything `tramline gui` does, from an iPhone 15 Pro, in SwiftUI with Liquid Glass, signing in to the Pi directly. Started 2026-11-13. Its notes were written 2026-11-11, before any of it was built.
 
+## State, 2026-11-22
+
+Caught up with Tramline 0.1.1, `go test` and the iOS Simulator against `tramline serve --sim` only, not the real Pi:
+
+- **Status streams.** `PrinterStore` follows `/api/events` and `/v1/events` (parsed by `StatusEvents` in `TramlineClient.swift`) instead of polling, as `followStatus` in `shared/status.js` does: quiet 5 s shows "can't reach", no data for 15 s drops and reopens the stream (the request's idle timeout), and a failed stream is retried every 2 s. A Pi with no streams answers 404, which the app can see where `EventSource` can't, so a 404 switches to polling as before, without the GUI's probing poll. `GET /v1/status` is still asked every 5 seconds for the plug, which the stream leaves out, and the last plug read is kept.
+- **SHA-256 sums.** An "i" beside a file on the Now card, Files (Pi and card), the print sheet and Schedule shows its sum, what it was checked against, and copies it. "!" is a file damaged on the Pi or an older copy on the card, "?" one whose sum isn't known. Wording is from `jobSum`, `piSum` and `cardSum`, in `Store/Sums.swift`. Card rows say "copied from …" and "older version", and a Pi file with a stale copy says "older copy on card".
+- **Tests:** `Sums` and `Streams` suites, with `files-sums.json` and `events-v1.txt` captured from the simulator.
+
 ## State, 2026-11-13
 
 - **Built and tried in the iOS Simulator** against `tramline serve --sim`: sign-in by client certificate and pinned server fingerprint, the status card, the 3D view (the Pi's own `view.js` in a `WKWebView`), Files, Printer, Schedule and More, and the hold-to-stop button above the tab bar on every tab.

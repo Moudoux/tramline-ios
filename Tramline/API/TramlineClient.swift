@@ -67,6 +67,62 @@ final class TramlineClient: Sendable {
         return (try JSON.decoder.decode(WebStatus.self, from: data), data)
     }
 
+    // MARK: - Status streams
+
+    /// `GET /v1/events`: the full status without the plug, pushed within 200 ms of a
+    /// change and at least once a second. Each element is one status's JSON.
+    func statusEvents() -> AsyncThrowingStream<Data, Error> {
+        events { host in
+            var req = URLRequest(url: URL(string: "https://\(host)/v1/events")!)
+            req.timeoutInterval = Self.streamStale
+            return try await self.wrap(host: host) { try await self.session.bytes(for: req) }
+        }
+    }
+
+    /// `GET /api/events` on the read-only page: its status, pushed the same way.
+    func webStatusEvents() -> AsyncThrowingStream<Data, Error> {
+        events { host in
+            var req = URLRequest(url: URL(string: "http://\(host)/api/events")!)
+            req.timeoutInterval = Self.streamStale
+            return try await self.plain.bytes(for: req)
+        }
+    }
+
+    /// A stream with nothing for this long has stalled, so it's dropped and opened again.
+    /// The Pi sends at least once a second.
+    static let streamStale: TimeInterval = 15
+
+    /// Opens a server-sent event stream, trying the addresses in turn as requests do, and
+    /// yields the data of each `status` event. Go's JSON has no newlines, so each event is
+    /// one `data:` line. It ends with `APIError.notFound` from a Pi with no streams.
+    private func events(_ open: @escaping @Sendable (String) async throws -> (URLSession.AsyncBytes, URLResponse))
+        -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let (bytes, resp) = try await self.withFallback { try await open($0) }
+                    guard let http = resp as? HTTPURLResponse else { throw APIError.server("No answer.") }
+                    if http.statusCode == 404 { throw APIError.notFound }
+                    guard http.statusCode == 200,
+                          http.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/event-stream") == true
+                    else { throw APIError.server("The Pi answered \(http.statusCode).") }
+                    var parser = StatusEvents()
+                    for try await line in bytes.lines {
+                        if let data = parser.feed(line) { continuation.yield(data) }
+                    }
+                    continuation.finish(throwing: APIError.unreachable("The Pi closed the status stream."))
+                } catch let error as URLError {
+                    continuation.finish(throwing: error.code == .timedOut
+                        ? APIError.unreachable("The Pi stopped sending its status.")
+                        : APIError.unreachable(error.localizedDescription))
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     func power(on: Bool) async throws { try await sendIgnoring("POST", "/v1/power", body: ["on": on]) }
     func preheat(bed: Int, nozzle: Int) async throws -> PreheatResponse {
         try await send("POST", "/v1/preheat", body: ["bed": bed, "nozzle": nozzle])
@@ -222,6 +278,26 @@ final class TramlineClient: Sendable {
         } catch {
             throw APIError.server("Couldn't read the Pi's answer: \(error)")
         }
+    }
+}
+
+/// Picks the `status` events out of a server-sent event stream, a line at a time.
+/// `AsyncBytes.lines` skips blank lines, so an event ends at its data line, which is one
+/// line as Go's JSON has no newlines. Comments, `retry:` and other events are ignored.
+struct StatusEvents {
+    private var event = ""
+
+    mutating func feed(_ line: String) -> Data? {
+        if line.hasPrefix("event:") {
+            event = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+        } else if line.hasPrefix("data:") {
+            defer { event = "" }
+            guard event == "status" else { return nil }
+            var data = line.dropFirst(5)
+            if data.first == " " { data = data.dropFirst() }
+            return Data(data.utf8)
+        }
+        return nil
     }
 }
 

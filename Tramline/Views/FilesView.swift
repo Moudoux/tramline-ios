@@ -68,16 +68,25 @@ struct FilesView: View {
                             if card.isEmpty {
                                 Text("Nothing on the card.").foregroundStyle(.secondary)
                             }
-                            let ours = Set((files.files ?? []).map { $0.sdName.uppercased() })
+                            let records = files.files ?? []
+                            let ours = Set(records.map { $0.sdName.uppercased() })
                             ForEach(card) { f in
                                 HStack {
                                     VStack(alignment: .leading) {
-                                        Text(f.name).font(.body.monospaced())
-                                        Text(Words.bytes(f.size)).font(.caption).foregroundStyle(.secondary)
+                                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                            Text(f.name).font(.body.monospaced())
+                                            SumBadge(info: SumInfo.card(f, records: records))
+                                        }
+                                        Text(f.upload.map { "\(Words.bytes(f.size)) · copied from \($0)" } ?? Words.bytes(f.size))
+                                            .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    let mine = ours.contains(f.name.uppercased())
-                                    ToneChip(text: mine ? "from here" : "not from here", tone: mine ? .good : .plain)
+                                    let mine = f.upload != nil || ours.contains(f.name.uppercased())
+                                    if SumInfo.isOlder(f, records: records) {
+                                        ToneChip(text: "older version", tone: .bad)
+                                    } else {
+                                        ToneChip(text: mine ? "from here" : "not from here", tone: mine ? .good : .plain)
+                                    }
                                 }
                             }
                         } else {
@@ -162,7 +171,7 @@ struct FilesView: View {
         case "verified": return ("on card", .good)
         case "running": return ("copying", .active)
         case "failed": return ("copy failed", .bad)
-        default: return ("Pi only", .plain)
+        default: return rec.onCard && rec.cardSHA256 != nil ? ("older copy on card", .plain) : ("Pi only", .plain)
         }
     }
 
@@ -186,6 +195,7 @@ private struct FileRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(rec.name).font(.body.weight(.medium)).lineLimit(2)
+                SumBadge(info: SumInfo.pi(rec))
                 Spacer(minLength: 8)
                 ToneChip(text: chip.0, tone: chip.1)
                     .padding(.trailing, 32)
@@ -194,6 +204,10 @@ private struct FileRow: View {
                 .joined(separator: " · "))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if rec.damaged {
+                Text("Damaged on the Pi: it no longer matches its upload. Upload it again.")
+                    .font(.caption).foregroundStyle(Theme.bad)
+            }
             if rec.sdState == "failed", let e = rec.sdError {
                 Text(e).font(.caption).foregroundStyle(Theme.bad)
             }
@@ -252,8 +266,17 @@ struct RunSheet: View {
                 if files.isEmpty {
                     Text("Upload a file first.").foregroundStyle(.secondary)
                 } else {
-                    Picker("File", selection: $name) {
-                        ForEach(files) { Text($0.name).tag($0.name) }
+                    Section {
+                        Picker("File", selection: $name) {
+                            ForEach(files) { Text($0.name).tag($0.name) }
+                        }
+                    } footer: {
+                        if let rec {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text("SHA-256 \(SumInfo.short(rec.sha256))").font(.footnote.monospaced())
+                                SumBadge(info: SumInfo.pi(rec))
+                            }
+                        }
                     }
                 }
 

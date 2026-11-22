@@ -72,7 +72,10 @@ struct ScheduleView: View {
                 Spacer()
                 ToneChip(text: Words.scheduleState(p.state), tone: Words.scheduleTone(p.state))
             }
-            Text("\(p.name), from the \(p.from == "sd" ? "card" : "Pi")").font(.subheadline).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(p.name), from the \(p.from == "sd" ? "card" : "Pi")").font(.subheadline).foregroundStyle(.secondary)
+                if let sum = SumInfo.schedule(sha256: p.sha256, from: p.from) { SumBadge(info: sum) }
+            }
             if let c = p.check { Text(Words.checkText("Check when scheduling", c)).font(.caption).foregroundStyle(.secondary) }
             if let c = p.finalCheck { Text(Words.checkText("Check at its time", c)).font(.caption).foregroundStyle(.secondary) }
             if let reason = p.reason {

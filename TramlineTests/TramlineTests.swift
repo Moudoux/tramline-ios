@@ -3,8 +3,8 @@ import Security
 import Testing
 @testable import Tramline
 
-private func fixture(_ name: String) throws -> Data {
-    let url = try #require(Bundle(for: BundleToken.self).url(forResource: name, withExtension: "json"))
+private func fixture(_ name: String, _ ext: String = "json") throws -> Data {
+    let url = try #require(Bundle(for: BundleToken.self).url(forResource: name, withExtension: ext))
     return try Data(contentsOf: url)
 }
 
@@ -61,6 +61,67 @@ private final class BundleToken {}
         _ = try JSON.decoder.decode(PreheatResponse.self, from: fixture("preheat"))
         _ = try JSON.decoder.decode(CoolResponse.self, from: fixture("cool"))
         #expect(try JSON.decoder.decode([ScheduledPrint].self, from: fixture("schedule-empty")).isEmpty)
+    }
+}
+
+@Suite struct Sums {
+    @Test func filesWithAnOlderCopyOnTheCard() throws {
+        // Captured from the simulator: cube.gcode copied, then uploaded again changed.
+        let files = try JSON.decoder.decode(FilesResponse.self, from: fixture("files-sums"))
+        let rec = try #require(files.files?.first)
+        #expect(rec.disk?.match == true)
+        #expect(!rec.damaged)
+        #expect(rec.cardSHA256 != nil && rec.cardSHA256 != rec.sha256)
+        #expect(SumInfo.pi(rec).kind == .plain)
+        #expect(SumInfo.pi(rec).notes.last?.contains("matches its upload") == true)
+
+        let card = try #require(files.card?.first)
+        #expect(card.upload == "cube.gcode")
+        #expect(SumInfo.isOlder(card, records: files.files ?? []))
+        #expect(SumInfo.card(card, records: files.files ?? []).kind == .bad)
+    }
+
+    @Test func damagedAndUnknown() throws {
+        var rec = try #require(JSON.decoder.decode(FilesResponse.self, from: fixture("files-sums")).files?.first)
+        rec.disk = DiskCheck(sha256: String(repeating: "0", count: 64), match: false, checkedAt: Date())
+        #expect(rec.damaged)
+        #expect(SumInfo.pi(rec).kind == .bad)
+        #expect(SumInfo.pi(rec).sha256 == rec.disk?.sha256)
+
+        let foreign = CardFile(name: "OTHER.GCO", size: 10)
+        #expect(SumInfo.card(foreign, records: []).kind == .unknown)
+        #expect(SumInfo.job(sha256: nil, mode: "stream", elsewhere: true) == nil)
+        #expect(SumInfo.job(sha256: nil, mode: "sd", elsewhere: nil)?.kind == .unknown)
+        #expect(SumInfo.short(rec.sha256).count == 12)
+    }
+}
+
+@Suite struct Streams {
+    @Test func statusEventsFromTheSimulator() throws {
+        // GET /v1/events from the simulator, as sent.
+        let text = String(decoding: try fixture("events-v1", "txt"), as: UTF8.self)
+        var parser = StatusEvents()
+        // As AsyncBytes.lines gives them, without the blank lines.
+        let events = text.split(separator: "\n", omittingEmptySubsequences: true)
+            .compactMap { parser.feed(String($0)) }
+        #expect(events.count >= 2)
+        for data in events {
+            let st = try JSON.decoder.decode(StatusResponse.self, from: data)
+            #expect(st.plug == nil)
+            #expect(st.printer.connected)
+        }
+    }
+
+    @Test func otherEventsAndCommentsAreSkipped() {
+        var parser = StatusEvents()
+        #expect(parser.feed("retry: 2000") == nil)
+        #expect(parser.feed(": a comment") == nil)
+        #expect(parser.feed("data: {}") == nil)
+        #expect(parser.feed("event: other") == nil)
+        #expect(parser.feed("data: {\"a\":1}") == nil)
+        #expect(parser.feed("event: status") == nil)
+        #expect(parser.feed("data:{\"a\":2}") == Data("{\"a\":2}".utf8))
+        #expect(parser.feed("data: {\"a\":3}") == nil)
     }
 }
 

@@ -48,6 +48,8 @@ struct WebStatus: Codable, Sendable, Equatable {
 struct WebPrint: Codable, Sendable, Equatable {
     var id: Int
     var name: String
+    /// The file it prints, see `PrintJob.sha256`.
+    var sha256: String?
     var mode: String
     var state: String
     var pos: Int64
@@ -64,7 +66,7 @@ struct WebPrint: Codable, Sendable, Equatable {
     var error: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, mode, state, pos, size, elsewhere, parked, stopping, check, turn, note, error
+        case id, name, sha256, mode, state, pos, size, elsewhere, parked, stopping, check, turn, note, error
         case movedAgo = "moved_ago"
         case runSeconds = "run_seconds"
         case linkLost = "link_lost"
@@ -73,11 +75,12 @@ struct WebPrint: Codable, Sendable, Equatable {
 
 struct WebCopy: Codable, Sendable, Equatable {
     var name: String
+    var sha256: String?
     var bytes: Int64
     var totalBytes: Int64
 
     enum CodingKeys: String, CodingKey {
-        case name, bytes
+        case name, sha256, bytes
         case totalBytes = "total_bytes"
     }
 }
@@ -85,6 +88,7 @@ struct WebCopy: Codable, Sendable, Equatable {
 struct WebSchedule: Codable, Sendable, Equatable, Identifiable {
     var id: Int
     var name: String
+    var sha256: String?
     var from: String
     var at: Date
     var state: String
@@ -134,6 +138,9 @@ struct PlugStatus: Codable, Sendable, Equatable {
 struct PrintJob: Codable, Sendable, Equatable {
     var id: Int
     var name: String
+    /// From the Pi, checked on its disk just before; from the card, the bytes sent in its
+    /// copy. Nil for a print started elsewhere, or before checksums were kept.
+    var sha256: String?
     var sdName: String?
     var mode: String
     var state: String
@@ -155,7 +162,7 @@ struct PrintJob: Codable, Sendable, Equatable {
     var finishedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, mode, state, elsewhere, pos, size, check, checks, parked, mesh, stopping, note, error
+        case id, name, sha256, mode, state, elsewhere, pos, size, check, checks, parked, mesh, stopping, note, error
         case sdName = "sd_name"
         case scheduleID = "schedule_id"
         case preCheck = "pre_check"
@@ -236,10 +243,12 @@ struct CopyJob: Codable, Sendable, Equatable {
     var state: String
     var bytes: Int64
     var totalBytes: Int64
+    /// The upload's, which the bytes sent must match.
+    var sha256: String?
     var error: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, state, bytes, error
+        case id, name, state, bytes, error, sha256
         case sdName = "sd_name"
         case totalBytes = "total_bytes"
     }
@@ -248,6 +257,8 @@ struct CopyJob: Codable, Sendable, Equatable {
 struct ScheduledPrint: Codable, Sendable, Equatable, Identifiable {
     var id: Int
     var name: String
+    /// The file's when it was scheduled: the upload's, or the card copy's.
+    var sha256: String?
     var from: String
     var at: Date
     var state: String
@@ -258,7 +269,7 @@ struct ScheduledPrint: Codable, Sendable, Equatable, Identifiable {
     var endedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, from, at, state, check, reason
+        case id, name, sha256, from, at, state, check, reason
         case jobID = "job_id"
         case finalCheck = "final_check"
         case endedAt = "ended_at"
@@ -288,11 +299,22 @@ struct FileRecord: Codable, Sendable, Equatable, Identifiable {
     /// Empty, `running`, `verified` or `failed`. A finished copy is `verified`.
     var sdState: String?
     var sdError: String?
+    /// What the Pi sent in the last copy whose size checked out on the card. It stays
+    /// after a new upload, as that copy is still on the card.
+    var cardSHA256: String?
+    var cardSize: Int64?
+    /// A fresh read of the file on the Pi's disk, in listings only.
+    var disk: DiskCheck?
 
     var id: String { name }
 
+    /// The file on the Pi no longer matches its upload.
+    var damaged: Bool { disk.map { $0.sha256 != nil && !$0.match } ?? false }
+
     enum CodingKeys: String, CodingKey {
-        case name, sha256, size, info
+        case name, sha256, size, info, disk
+        case cardSHA256 = "card_sha256"
+        case cardSize = "card_size"
         case uploadedAt = "uploaded_at"
         case sdName = "sd_name"
         case onCard = "on_card"
@@ -301,16 +323,36 @@ struct FileRecord: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-struct SDFile: Codable, Sendable, Equatable, Identifiable {
+struct DiskCheck: Codable, Sendable, Equatable {
+    var sha256: String?
+    /// The file reads as its upload did.
+    var match: Bool
+    var checkedAt: Date?
+    /// Why there's no answer, such as that it isn't read during a print or a copy.
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sha256, match, error
+        case checkedAt = "checked_at"
+    }
+}
+
+/// A file on the card. For one copied from here, `upload` names the file on the Pi, and
+/// `sha256` is what its last checked copy sent, if the size on the card still matches,
+/// or else `note` says why there's none.
+struct CardFile: Codable, Sendable, Equatable, Identifiable {
     var name: String
     var size: Int64
+    var upload: String?
+    var sha256: String?
+    var note: String?
     var id: String { name }
 }
 
 struct FilesResponse: Codable, Sendable, Equatable {
     var files: [FileRecord]?
     /// Nil when the printer couldn't be asked, with the reason in `cardNote`.
-    var card: [SDFile]?
+    var card: [CardFile]?
     var cardNote: String?
 
     enum CodingKeys: String, CodingKey {

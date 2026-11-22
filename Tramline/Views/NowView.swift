@@ -54,7 +54,10 @@ struct StatusCard: View {
                 }
             }
             if !card.file.isEmpty {
-                Text(card.file).font(.title3.weight(.semibold)).lineLimit(2).textSelection(.enabled)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(card.file).font(.title3.weight(.semibold)).lineLimit(2).textSelection(.enabled)
+                    if let sum = card.fileSum { SumBadge(info: sum) }
+                }
             }
 
             if let progress = card.progress {

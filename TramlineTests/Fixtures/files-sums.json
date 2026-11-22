@@ -1,0 +1,31 @@
+{
+  "files": [
+    {
+      "name": "cube.gcode",
+      "sha256": "5ecd8f38c9c5b4829a9a0fe2fd2c4bb7dbbcb4e0105b57d2b5da312043431d4b",
+      "size": 49,
+      "info": {
+        "lines": 3,
+        "sd_size": 43
+      },
+      "uploaded_at": "2026-11-22T15:25:31.151227+01:00",
+      "sd_name": "CUBEGC3B.GCO",
+      "on_card": true,
+      "card_sha256": "cf4d53fdde51fd2912dda01508ab3e14af6e63314cf08d84a58b0b7225121a13",
+      "card_size": 58,
+      "disk": {
+        "sha256": "5ecd8f38c9c5b4829a9a0fe2fd2c4bb7dbbcb4e0105b57d2b5da312043431d4b",
+        "match": true,
+        "checked_at": "2026-11-22T15:25:31.164928+01:00"
+      }
+    }
+  ],
+  "card": [
+    {
+      "name": "CUBEGC3B.GCO",
+      "size": 58,
+      "upload": "cube.gcode",
+      "sha256": "cf4d53fdde51fd2912dda01508ab3e14af6e63314cf08d84a58b0b7225121a13"
+    }
+  ]
+}
